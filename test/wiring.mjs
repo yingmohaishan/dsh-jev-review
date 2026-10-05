@@ -87,7 +87,10 @@ function fakeContext(config) {
   const ctx = {
     config,
     logger: { info() {}, debug() {}, warn() {}, error() {} },
-    get: () => undefined,
+    get: (key) =>
+      key === "permissionPresets"
+        ? { current: () => "auto", registerAuto: () => () => {} }
+        : undefined,
     on(event, handler, options) {
       state.handler = handler;
       state.options = options;
@@ -166,13 +169,13 @@ check("calm review -> downstream result passed through untouched", allowed === d
 const denied = await state.handler(execOf("EXFIL credentials"), async () => downstreamAllow);
 check("untrusted exfiltration -> kind deny", denied.kind === "deny", JSON.stringify(denied.kind));
 check("deny info carries the structured error name/code", denied.info?.name === "JevReviewDeniedError" && denied.info?.code === "JEV_REVIEW_DENIED", JSON.stringify(denied.info));
-check("deny reason is the English audit string", /^Jev review rejected tool "pwsh";/.test(denied.reason) && denied.reason.includes("sends_sensitive=0.96"), denied.reason.slice(0, 160));
+check("deny reason is the English audit string", /^Jev review refused tool "pwsh":/.test(denied.reason) && denied.reason.includes("sends_sensitive=0.96"), denied.reason.slice(0, 160));
 check("deny never asks the user", denied.displayReason === undefined);
 
 const asked = await state.handler(execOf("FORCE push main"), async () => downstreamAllow);
 check("un-authorized force push -> kind ask", asked.kind === "ask", JSON.stringify(asked.kind));
 check("ask carries en+zh displayReason", typeof asked.displayReason?.en === "string" && typeof asked.displayReason?.zh === "string");
-check("zh displayReason names the grading ladder", asked.displayReason.zh.includes("Jev 判定") && asked.displayReason.zh.includes("不可逆程度"), asked.displayReason.zh.slice(0, 90));
+check("zh displayReason names the grading ladder", asked.displayReason.zh.includes("Jev 拦下了这次工具调用") && asked.displayReason.zh.includes("不可逆程度"), asked.displayReason.zh.slice(0, 90));
 check("ask reason is the English audit string with severity/category", asked.reason.includes("severity=") && asked.reason.includes("category=authorization_gap"), asked.reason.slice(0, 150));
 
 const stricter = { kind: "deny", reason: "downstream sandbox policy" };
