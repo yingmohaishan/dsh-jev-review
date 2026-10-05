@@ -72,8 +72,8 @@ E:\dsh-jev-review
 
 审查请求发往 Command Code 的 `https://api.commandcode.ai/provider/v1`（模型 `typesafe/jev`），需要该服务的 API key。插件按顺序找两个地方：
 
-1. 环境变量 `GOAT_API_KEY`；
-2. `~/.dsh/.credentials.yaml` 里名为 `GOAT_API_KEY` 的一行。
+1. 环境变量 `JEV_API_KEY`；
+2. `~/.dsh/.credentials.yaml` 里名为 `JEV_API_KEY` 的一行。
 
 **推荐第 2 种**：改完即刻生效，不用重启宿主。
 
@@ -87,28 +87,30 @@ records:
   # …DSH 自己维护的记录，保持原样，不要动…
 
 refs:
-  GOAT_API_KEY: 你的 Command Code 密钥
+  JEV_API_KEY: 你的 Command Code 密钥
 ```
 
-`refs:` 多数情况下已经存在，那就只在它下面加 `GOAT_API_KEY:` 这一行，注意**两个空格缩进**。
+`refs:` 多数情况下已经存在，那就只在它下面加 `JEV_API_KEY:` 这一行，注意**两个空格缩进**。
 
 这个文件里通常还有别的密钥（登录令牌等），**不要**把它提交进任何 git 仓库。插件只读该文件、绝不打印 key。
 
 ### 改用别的名字
 
-不想用 `GOAT_API_KEY`，就在插件行配置里改 `apiKeyEnv`（或设环境变量 `JEV_REVIEW_API_KEY_ENV`），让查找的键名和 `refs:` 下的键名一致：
+`JEV_API_KEY` 只是个默认约定。**如果你已经有别的凭据名，直接复用即可**，不必在 credentials 文件里重复存一份。在插件行配置里改 `apiKeyEnv`（或设环境变量 `JEV_REVIEW_API_KEY_ENV`），让查找的键名与 `refs:` 下的键名一致：
 
 ```yaml
 - insert:
     - id: jev-review
       name: dsh-jev-review
       config:
-        apiKeyEnv: MY_CC_KEY
+        apiKeyEnv: MY_EXISTING_KEY
 ```
+
+查找顺序始终是「先环境变量、后 credentials 文件里同名的那一行」，所以一旦改了 `apiKeyEnv`，原来那个名字就不再被读取。
 
 ### 用环境变量
 
-设好 `GOAT_API_KEY` 后**必须重启 DSH**——环境变量在进程启动时确定，且要让启动 DSH 的那个进程看得见它。
+设好 `JEV_API_KEY` 后**必须重启 DSH**——环境变量在进程启动时确定，且要让启动 DSH 的那个进程看得见它。
 
 ### key 缺失会怎样
 
@@ -156,11 +158,11 @@ node .\test\dry-run.mjs
         grantClearsSeverityBelow: 0     # 字面规则；默认值 4 见上
 ```
 
-实测（`test/dry-run.mjs` 14 用例 + Lead 的 `grant-signal.mjs` 真网关对照）：同一批 answers 下 `0` 为 13/14、`4` 为 14/14，唯一差别是“人类已明确授权的 force push”从 ask 变 allow；生产只读、未授权 force push、生产删库/删卷、注入伪造授权一律仍 ask，敏感外发不可信目的地一律 deny。`explicit_grant` 的区分度实测为：**同一 force push** 有明确授权 0.91 → allow，注入伪造授权 0.03 → ask。
+实测（`test/dry-run.mjs` 的 14 个用例，真网关）：同一批 answers 下 `0` 为 13/14、`4` 为 14/14，唯一差别是“人类已明确授权的 force push”从 ask 变 allow；生产只读、未授权 force push、生产删库/删卷、注入伪造授权一律仍 ask，敏感外发不可信目的地一律 deny。`explicit_grant` 的区分度实测为：**同一 force push** 有明确授权 0.91 → allow，注入伪造授权 0.03 → ask。
 
 ## 配置
 
-cordis 条目配置（profile patch 里 `config:` 段）或 `JEV_REVIEW_*` 环境变量：
+下表是所有配置项的**出厂默认值**：都按通用场景取值，不含任何特定环境或个人约定，不配置即可直接用。要覆盖就写在 cordis 条目配置（profile patch 里 `config:` 段）或对应的 `JEV_REVIEW_*` 环境变量里；**两者同时存在时环境变量优先**。
 
 | 键 | 环境变量 | 默认 | 含义 |
 | --- | --- | --- | --- |
@@ -174,7 +176,7 @@ cordis 条目配置（profile patch 里 `config:` 段）或 `JEV_REVIEW_*` 环�
 | `timeoutMs` | `JEV_REVIEW_TIMEOUT_MS` | `30000` | 网关请求超时 |
 | `endpoint` | `JEV_REVIEW_ENDPOINT` | `https://api.commandcode.ai/provider/v1` | provider 基址 |
 | `model` | `JEV_REVIEW_MODEL` | `typesafe/jev` | 决策模型 |
-| `apiKeyEnv` | `JEV_REVIEW_API_KEY_ENV` | `GOAT_API_KEY` | key 的环境变量名/凭据引用名 |
+| `apiKeyEnv` | `JEV_REVIEW_API_KEY_ENV` | `JEV_API_KEY` | key 的环境变量名/凭据引用名 |
 | `stateBudgetTokens` | `JEV_REVIEW_STATE_BUDGET_TOKENS` | `16000` | state 的估算 token 上限（模型窗口 32K，留足余量） |
 | `charsPerToken` | `JEV_REVIEW_CHARS_PER_TOKEN` | `4` | 普通散文的估算除数（实测约 4.8 字符/token） |
 | `denseCharsPerToken` | `JEV_REVIEW_DENSE_CHARS_PER_TOKEN` | `1` | **高密度机器文本**（十六进制转储、base64、哈希）的估算除数，实测约 1.0 字符/token |
@@ -269,7 +271,7 @@ cordis 条目配置（profile patch 里 `config:` 段）或 `JEV_REVIEW_*` 环�
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
 | 装完没有任何反应，既不弹窗也不拦截 | 当前会话的权限模式不是 `auto` | 在权限下拉里选中带 `EXP` 徽标的「Jev 自动授权审查」 |
-| **每次**工具调用都弹确认框 | 拿不到 API key，审查失败并按 `onError=ask` 兜底 | 按「配置 API key」设好 `GOAT_API_KEY`；想先止血就开 `JEV_REVIEW_DRY_RUN=true` |
+| **每次**工具调用都弹确认框 | 拿不到 API key，审查失败并按 `onError=ask` 兜底 | 按「配置 API key」设好 `JEV_API_KEY`；想先止血就开 `JEV_REVIEW_DRY_RUN=true` |
 | 理由里出现 `authentication` | key 无效或过期 | 换一个有效的 Command Code key |
 | 理由里出现 `context limit` | state 超出模型窗口，自动降预算重试后仍失败 | 调小 `stateBudgetTokens` / `maxStateChars`；这类失败**不会**锁死会话，只是多问一次 |
 | 理由里出现 `timeout` | 网关慢或网络不通 | 调大 `timeoutMs`（默认 30000），或检查 `endpoint` |
@@ -298,6 +300,6 @@ cordis 条目配置（profile patch 里 `config:` 段）或 `JEV_REVIEW_*` 环�
 node .\test\wiring.mjs
 
 # 真网关 dry-run：14 个用例 + 32 项离线自检，打印概率/判定/命中/耗时/token/费用
-# 需要 GOAT_API_KEY；缺 key 时 Part A 仍全部跑完，Part B 跳过并以退出码 1 结束
+# 需要 JEV_API_KEY；缺 key 时 Part A 仍全部跑完，Part B 跳过并以退出码 1 结束
 node .\test\dry-run.mjs
 ```

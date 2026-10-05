@@ -258,8 +258,8 @@ console.log(`\nPart A: ${failures === 0 ? "all checks passed" : `${failures} che
 // --- Part B: live gateway ------------------------------------------------
 console.log("=== Part B: live systemone / typesafe/jev ===\n");
 
-const liveConfig = resolveConfig({ endpoint: process.env.GOAT_BASE_URL }, process.env);
-const envKey = (process.env.GOAT_API_KEY ?? "").trim() !== "";
+const liveConfig = resolveConfig({ endpoint: process.env.JEV_BASE_URL }, process.env);
+const envKey = (process.env.JEV_API_KEY ?? "").trim() !== "";
 const key = loadApiKey({ envName: liveConfig.apiKeyEnv });
 console.log(
   `endpoint=${liveConfig.endpoint} model=${liveConfig.model} tau=${liveConfig.tau} askSeverity=${liveConfig.askSeverity} ` +
