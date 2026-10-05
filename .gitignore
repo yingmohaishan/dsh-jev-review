@@ -1,0 +1,16 @@
+# dependencies
+node_modules/
+
+# credentials — never commit these
+.env
+.env.*
+.credentials.yaml
+*.credentials.yaml
+
+# review audit logs (contain real tool-call commands and paths)
+*.jsonl
+
+# local junk
+*.log
+.DS_Store
+Thumbs.db

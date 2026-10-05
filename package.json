@@ -1,0 +1,22 @@
+{
+  "name": "dsh-jev-review",
+  "version": "0.1.0",
+  "description": "用 Command Code 的 Jev 决策模型在每次工具调用前做分级授权审查：简单不可逆自动放行，重大不可逆要求用户确认，敏感数据外发到不可信目的地直接拒绝。",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./locale/*.json": "./locale/*.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "icon": "./icon.svg",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

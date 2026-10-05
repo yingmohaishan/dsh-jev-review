@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Jev Auto Review",
+    "description": "Grades every tool call with the Jev decision model before it runs; simple irreversible actions pass automatically."
+  }
+}
