@@ -8,6 +8,10 @@
 
 它是官方实验插件 `@deepseek-ai/dsh-experimental-auto-review` 的替代品：接线方式相同（`tools/pre-execute` 前置拦截），但判定不是聊天模型输出 JSON，而是六个带类型的决策问题 + 固定的阈值规则；本地不依赖任何 DSH 包（零依赖，避免桌面端安装前的 DSH peer 兼容校验）。
 
+## 来源与许可
+
+判定语义——来源角色（`human-instruction` / `direct-parent-instruction` / `constraint` / `checkpoint` / `fact`）、不可逆阶梯与影响范围阶梯——沿用 DeepSeek 以 MIT 许可公开的插件 [`@deepseek-ai/dsh-experimental-auto-review`](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/experimental/auto-review)（Copyright © DeepSeek）。本插件的提示词针对"返回概率而非文本"的决策模型做了改写，判定规则（`lib/rule.js`）、预算裁剪（`lib/snapshot.js`）、网关客户端（`lib/jev.js`）与自保护接线（`lib/index.js`）均为独立实现。
+
 ## 工作原理
 
 ```
