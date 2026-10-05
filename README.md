@@ -31,15 +31,110 @@ tools/pre-execute (prepend)
 
 `needs_confirm`（这次调用还需要人类确认吗）与 `explicit_grant`（保留指令是否**点名**授权了这个确切动作/目标/范围）是两个独立信号。严重度门槛只允许被 `explicit_grant` 解除：模型单纯觉得“这是常规工作”不算授权。缺失的 `explicit_grant` 按 `0`（无授权）计，绝不按 1 计。
 
-## 安装与开关
+## 安装
 
-安装与接线由发起方（profile 所有者）完成，本包自身不安装任何东西：
+本包**没有发布到 npm**，所以不要在插件页里输入包名 `dsh-jev-review`——那会去注册表查，查不到。用下面两种方式之一，装完点「立即启用」。
 
-1. 以本目录作为 profile 依赖安装（`dsh plugin ... install_bundle`／`set_bundle`），包名 `dsh-jev-review`；
-2. 包声明的 `dsh.bundle.patch = ./cordis.patch.yml` 会让它作为一个“组合包”出现在 DSH 插件页，条目 id 为 `jev-review`；
-3. 插件页可见后，用插件页的开关启用/停用。停用会写入 profile patch 的 `disabled: true`，等价于本插件的 `enabled: false`。
+### 方式 A：从 GitHub 安装
 
-API key：优先读环境变量 `GOAT_API_KEY`，否则读 `~/.dsh/.credentials.yaml` 的 `refs.GOAT_API_KEY`（只读该文件，绝不打印 key）。key 缺失时插件仍会加载，但每次审查都会失败并按 `onError`（默认 `ask`）兜底——不会静默放行。
+1. 打开 DSH 侧边栏的**插件**页；
+2. 点**添加插件**；
+3. 输入框填这个 Git 地址：
+
+   ```
+   https://github.com/yingmohaishan/dsh-jev-review
+   ```
+
+4. 点**安装**，等 pnpm 拉取完成；出现**立即启用**时点它（直接关掉对话框则只安装、不启用）。
+
+连不上 GitHub 时页面会提示**无法访问 GitHub**并给**改用国内镜像**。注意镜像只提供 npm 注册表里的包，**不能替代 GitHub 仓库下载**；本包不在 npm 上，所以镜像解决不了，需要先修好 GitHub 连通性（代理等）。
+
+### 方式 B：从本地目录安装（不需要 GitHub 连通性）
+
+```powershell
+git clone https://github.com/yingmohaishan/dsh-jev-review.git E:\dsh-jev-review
+```
+
+然后在插件页 →**添加插件**里填**绝对路径**：
+
+```
+E:\dsh-jev-review
+```
+
+### 装完有两次「启用」，别混淆
+
+- **插件页的组合包开关**：控制这个组合包加不加载。关闭它会往 profile 的 `cordis.patch.yml` 写 `disabled: true`，等价于本插件的 `enabled: false`。
+- **会话的权限模式**：见下面「启用审查模式」。**加载了插件不代表它在审查。**
+
+插件安装后暂不支持自动更新，升级请先卸载再装新版。
+
+## 配置 API key
+
+审查请求发往 Command Code 的 `https://api.commandcode.ai/provider/v1`（模型 `typesafe/jev`），需要该服务的 API key。插件按顺序找两个地方：
+
+1. 环境变量 `GOAT_API_KEY`；
+2. `~/.dsh/.credentials.yaml` 里名为 `GOAT_API_KEY` 的一行。
+
+**推荐第 2 种**：改完即刻生效，不用重启宿主。
+
+### 写入 `~/.dsh/.credentials.yaml`
+
+Windows 上是 `C:\Users\<你>\.dsh\.credentials.yaml`。在顶层 `refs:` 下加一行即可：
+
+```yaml
+version: 1
+records:
+  # …DSH 自己维护的记录，保持原样，不要动…
+
+refs:
+  GOAT_API_KEY: 你的 Command Code 密钥
+```
+
+`refs:` 多数情况下已经存在，那就只在它下面加 `GOAT_API_KEY:` 这一行，注意**两个空格缩进**。
+
+这个文件里通常还有别的密钥（登录令牌等），**不要**把它提交进任何 git 仓库。插件只读该文件、绝不打印 key。
+
+### 改用别的名字
+
+不想用 `GOAT_API_KEY`，就在插件行配置里改 `apiKeyEnv`（或设环境变量 `JEV_REVIEW_API_KEY_ENV`），让查找的键名和 `refs:` 下的键名一致：
+
+```yaml
+- insert:
+    - id: jev-review
+      name: dsh-jev-review
+      config:
+        apiKeyEnv: MY_CC_KEY
+```
+
+### 用环境变量
+
+设好 `GOAT_API_KEY` 后**必须重启 DSH**——环境变量在进程启动时确定，且要让启动 DSH 的那个进程看得见它。
+
+### key 缺失会怎样
+
+插件照常加载，但**每次审查都会失败**，并按 `onError`（默认 `ask`）兜底，也就是**每个工具调用都会弹确认框**。这是刻意的 fail-closed：绝不因为拿不到 key 就静默放行。所以一旦出现「什么都问」，第一个要查的就是 key。
+
+## 启用审查模式
+
+**加载插件 ≠ 生效。** 插件挂载时只做两件事：向宿主注册保留权限预设 `auto`，以及挂一个前置监听器。监听器只在**当前会话选中该模式**时才审查；其余会话零拦截、零网关请求。
+
+启用：在会话的**权限模式下拉**里选带 `EXP` 徽标的 **Jev 自动授权审查**（内部名 `auto`）。选中后宿主会把沙箱置为 `danger-full-access`、审批策略置为 `ask`。
+
+想先看判定而不真正拦截，把 `dryRun: true`（或 `JEV_REVIEW_DRY_RUN=true`）打开跑一段，确认判定符合预期再关掉。
+
+## 验证装好了
+
+由内到外三步：
+
+```powershell
+# 1) 接线自检：不需要 key、不联网、零费用，24 项应全绿
+node .\test\wiring.mjs
+
+# 2) 真网关 dry-run：需要 key，14 个用例 + 32 项离线自检
+node .\test\dry-run.mjs
+```
+
+3. 在会话里让它做一件普通的事（比如改写一个工作区文件）。权限模式选中 `auto` 后，普通操作应当是**静默放行**的；如果**每个**调用都弹窗，回到「key 缺失会怎样」。
 
 ## 推荐配置
 
@@ -133,11 +228,9 @@ cordis 条目配置（profile patch 里 `config:` 段）或 `JEV_REVIEW_*` 环�
 
 即便估算仍偏乐观，遇到上下文类错误（`context limit` / `max_tokens_exceeded`）时插件会自动把预算减半、再减到四分之一**重建 state 并重试**（最多 3 次尝试），只有非上下文类错误才立刻放弃 —— 估算错误的代价是一次重试，而不是整个会话失效。
 
-## 启用方式与自保护
+## 自保护
 
-**加载插件 ≠ 生效。** 插件挂载时只做两件事：向宿主注册保留权限预设 `auto`（客户端权限下拉里因此多出带 `EXP` 徽标的选项），以及挂一个前置监听器。监听器只在**当前会话选中该模式**时才审查；其余会话零拦截、零网关请求（有接线测试为证）。这是刻意的：早先“加载即审查所有模式”的版本，一旦审查失败就会把整个会话（连同它自己的关停路径）锁死。
-
-两条自保护：
+只在选中 `auto` 模式的会话里审查（其余会话零拦截、零网关请求，有接线测试为证），是刻意的：早先“加载即审查所有模式”的版本，一旦审查失败就会把整个会话（连同它自己的关停路径）锁死。在此之上还有两条自保护：
 
 - **永不拦截**对 `<dsh home>/profiles/*/cordis.patch.yml`、`package.json`、`compatibility.json` 的 `write`/`edit` —— 那是把插件关掉的开关；否则一旦 `ask` 被宿主拒绝，插件就再也关不掉。
 - 会话审批策略为 `never` 时，`ask` 不可能送达到人，插件会把它转成**带原因的明确拒绝**（`the session approval policy is "never", so a confirmation could not reach you`），而不是让宿主回一句误导性的 `the user rejected tool`。
@@ -171,6 +264,20 @@ cordis 条目配置（profile patch 里 `config:` 段）或 `JEV_REVIEW_*` 环�
 
 任何异常（超时、HTTP 非 2xx、响应形状不符、session API 抛错、内部 bug）都归一化为一句话（如 `jev review unavailable (context limit)`），再按 `onError` 降级，默认 `ask`。硬拒**必须**由两项有效答案共同支持、且目的地置信度达到 `denyConfidence`，所以网关抖动或接近平票的目的地判定最多只会多问用户一次，不会产生无法覆盖的封锁。session 读取全部 try/catch：取不到就退化成“只有 `pending_action` + `environment`”的最小 state，并在 `review_notes` 里说明历史可能不完整。
 
+## 排错
+
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| 装完没有任何反应，既不弹窗也不拦截 | 当前会话的权限模式不是 `auto` | 在权限下拉里选中带 `EXP` 徽标的「Jev 自动授权审查」 |
+| **每次**工具调用都弹确认框 | 拿不到 API key，审查失败并按 `onError=ask` 兜底 | 按「配置 API key」设好 `GOAT_API_KEY`；想先止血就开 `JEV_REVIEW_DRY_RUN=true` |
+| 理由里出现 `authentication` | key 无效或过期 | 换一个有效的 Command Code key |
+| 理由里出现 `context limit` | state 超出模型窗口，自动降预算重试后仍失败 | 调小 `stateBudgetTokens` / `maxStateChars`；这类失败**不会**锁死会话，只是多问一次 |
+| 理由里出现 `timeout` | 网关慢或网络不通 | 调大 `timeoutMs`（默认 30000），或检查 `endpoint` |
+| 改了 `lib/*.js` 却不生效 | 宿主对 ESM 模块按 URL 缓存 | **重启 DSH 进程**；只有改配置才能热应用 |
+| 插件页里输 `dsh-jev-review` 查不到 | 本包没有发布到 npm | 用 Git 地址或本地绝对路径安装，见「安装」 |
+
+判定结果不符合预期时，先用 `dryRun: true` 只记录不拦截，再对着「分级语义」和「配置」两张表调 `tau` / `askSeverity` / `grantClearsSeverityBelow` / `denyConfidence`。
+
 ## 已知限制
 
 - Jev 是文本决策模型：图片/附件只作为 `fact` 记录存在，其内容被省略（不能参与判定）。
@@ -184,10 +291,13 @@ cordis 条目配置（profile patch 里 `config:` 段）或 `JEV_REVIEW_*` 环�
 
 ## 测试
 
+需要 Node ≥ 18（用到 `fetch` 与 `AbortSignal.timeout`）。在仓库根目录跑：
+
 ```powershell
-$node = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
-# 真网关 dry-run：14 个用例 + 离线自检，打印概率/判定/命中/耗时/token/费用
-& $node .\test\dry-run.mjs
 # 宿主接线测试：本地 stub 网关，零费用，验证注册、跳过规则、三种 payload、兜底与销毁取消
-& $node .\test\wiring.mjs
+node .\test\wiring.mjs
+
+# 真网关 dry-run：14 个用例 + 32 项离线自检，打印概率/判定/命中/耗时/token/费用
+# 需要 GOAT_API_KEY；缺 key 时 Part A 仍全部跑完，Part B 跳过并以退出码 1 结束
+node .\test\dry-run.mjs
 ```
