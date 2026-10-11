@@ -49,6 +49,8 @@ const exfil = {
 };
 
 let requests = 0;
+/** How many times the flaky command has been asked, so it can fail then recover. */
+let flakyAttempts = 0;
 const server = createServer((request, response) => {
   let body = "";
   request.on("data", (chunk) => {
@@ -71,6 +73,12 @@ const server = createServer((request, response) => {
       return reply(400, '{"error":{"message":"{\\"error\\":{\\"error_type\\":\\"max_tokens_exceeded\\"}}"}}');
     }
     if (command.includes("BAD-JSON")) return reply(200, "this is not json");
+    if (command.includes("FLAKY-500")) {
+      flakyAttempts += 1;
+      // Two transient failures, then success: proves the retry is what recovers
+      // the call, not the fail-closed verdict.
+      if (flakyAttempts <= 2) return reply(500, '{"error":"boom"}');
+    }
     const answers = command.includes("EXFIL") ? exfil : command.includes("FORCE") ? forcePush : calm;
     const send = () =>
       reply(200, JSON.stringify({ model: "typesafe/jev", answers, usage: { input_tokens: 11, output_tokens: 2 } }));
@@ -187,6 +195,19 @@ const gatewayFailure = await state.handler(execOf("INTERNAL-500"), async () => d
 check("HTTP 500 -> ask (onError default) with category review_failure", gatewayFailure.kind === "ask", gatewayFailure.kind);
 check("HTTP 500 reason is short and does not leak the gateway body", gatewayFailure.reason.includes("could not be completed") && !gatewayFailure.reason.includes("boom"), gatewayFailure.reason.split("\n")[0].slice(0, 200));
 check("HTTP 500 reason text is normalized as 'gateway error'", gatewayFailure.reason.includes("gateway error"), gatewayFailure.reason.slice(0, 120));
+
+const beforeFlaky = requests;
+const recovered = await state.handler(execOf("FLAKY-500 recover"), async () => downstreamAllow);
+check(
+  "a transient 5xx is retried and the call is allowed once the gateway recovers",
+  recovered === downstreamAllow,
+  JSON.stringify(recovered),
+);
+check(
+  "the retry really re-requested the gateway (2 failures + 1 success)",
+  requests - beforeFlaky === 3,
+  `${requests - beforeFlaky} requests`,
+);
 
 const contextFailure = await state.handler(execOf("CONTEXT-400"), async () => downstreamAllow);
 check("nested 400 max_tokens_exceeded -> 'context limit'", contextFailure.reason.includes("context limit"), contextFailure.reason.slice(0, 150));

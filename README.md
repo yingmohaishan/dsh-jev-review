@@ -167,10 +167,11 @@ node .\test\dry-run.mjs
 | 键 | 环境变量 | 默认 | 含义 |
 | --- | --- | --- | --- |
 | `enabled` | `JEV_REVIEW_ENABLED` | `true` | 关闭后不注册任何拦截 |
-| `tau` | `JEV_REVIEW_TAU` | `0.5` | 所有 noul 问题的概率阈值 τ |
+| `tau` | `JEV_REVIEW_TAU` | `0.5` | `sends_sensitive` 与授权信号的概率阈值 τ |
+| `confirmTau` | `JEV_REVIEW_CONFIRM_TAU` | `0.7` | `needs_confirm` **单独**使用的阈值。与 `tau` 分开是因为两个信号的实测分布相差很远：普通任务内工作时模型给的 `needs_confirm` 落在 0.50–0.65，而同一批调用的 `sends_sensitive` 只有 0.03–0.08，一个阈值不可能同时适配两者。设为 `0.5` 恢复旧的单阈值行为 |
 | `askSeverity` | `JEV_REVIEW_ASK_SEVERITY` | `2` | 严重度 ≥ 该值一律要确认 |
 | `onError` | `JEV_REVIEW_ON_ERROR` | `"ask"` | 内部失败（超时/HTTP/形状不符）的兜底：`ask` 或 `deny`，**没有 `allow`** |
-| `grantClearsSeverityBelow` | `JEV_REVIEW_GRANT_CLEARS_SEVERITY_BELOW` | `4` | 仅当 `explicit_grant ≥ τ`、`needs_confirm < τ`、严重度低于该值、且影响范围低于 `grantNeverClearsBlastAtOrAbove` 时，严重度门槛才让路；`0` = 字面规则（任何达到 `askSeverity` 的动作都要确认） |
+| `grantClearsSeverityBelow` | `JEV_REVIEW_GRANT_CLEARS_SEVERITY_BELOW` | `4` | 仅当 `explicit_grant ≥ τ`、`needs_confirm < confirmTau`、严重度低于该值、且影响范围低于 `grantNeverClearsBlastAtOrAbove` 时，严重度门槛才让路；`0` = 字面规则（任何达到 `askSeverity` 的动作都要确认） |
 | `grantNeverClearsBlastAtOrAbove` | `JEV_REVIEW_GRANT_NEVER_CLEARS_BLAST_AT_OR_ABOVE` | `3` | 即使有授权，影响范围达到该档位（`3` = production、`4` = public）仍然要确认 |
 | `denyConfidence` | `JEV_REVIEW_DENY_CONFIDENCE` | `0.6` | 硬拒所需的 `P(untrusted)` 下限。硬拒是不可覆盖的判决，所以只在高置信时才触发；低于该值降级成 ask（可恢复）。设为 `0` 恢复字面规则 |
 | `timeoutMs` | `JEV_REVIEW_TIMEOUT_MS` | `30000` | 网关请求超时 |
@@ -206,7 +207,7 @@ node .\test\dry-run.mjs
 | --- | --- |
 | `sends_sensitive ≥ τ` 且 `destination = untrusted` 且 `P(untrusted) ≥ denyConfidence`（需两项都有有效答案） | **deny**（硬拒，用户授权不能覆盖） |
 | `sends_sensitive ≥ τ` 且（`destination = unknown` 或 `untrusted` 但置信不足） | ask（可恢复的 fail closed） |
-| `needs_confirm ≥ τ` | ask（授权缺失/含糊/窄于实际效果） |
+| `needs_confirm ≥ confirmTau` | ask（授权缺失/含糊/窄于实际效果） |
 | `severity ≥ askSeverity` 且未命中 `grantClearsSeverityBelow` 豁免 | ask |
 | 否则 | allow |
 
@@ -228,7 +229,7 @@ node .\test\dry-run.mjs
 
 `policy`、`environment`、`project_instructions`、`pending_action` **永不裁剪**（`pending_action` 内的超长字符串按 `maxStringChars` 截断）；每次裁剪都会在 state 里留下 `truncated_history: {dropped, reason:"budget", ...}`，让判定者知道自己没看到全部历史。
 
-即便估算仍偏乐观，遇到上下文类错误（`context limit` / `max_tokens_exceeded`）时插件会自动把预算减半、再减到四分之一**重建 state 并重试**（最多 3 次尝试），只有非上下文类错误才立刻放弃 —— 估算错误的代价是一次重试，而不是整个会话失效。
+即便估算仍偏乐观，遇到上下文类错误（`context limit` / `max_tokens_exceeded`）时插件会自动把预算减半、再减到四分之一**重建 state 并重试** —— 估算错误的代价是一次重试，而不是整个会话失效。瞬时故障（5xx / 网络 / 超时）另有独立的重试，见「失败兜底」。
 
 ## 自保护
 
@@ -264,7 +265,13 @@ node .\test\dry-run.mjs
 
 ## 失败兜底
 
-任何异常（超时、HTTP 非 2xx、响应形状不符、session API 抛错、内部 bug）都归一化为一句话（如 `jev review unavailable (context limit)`），再按 `onError` 降级，默认 `ask`。硬拒**必须**由两项有效答案共同支持、且目的地置信度达到 `denyConfidence`，所以网关抖动或接近平票的目的地判定最多只会多问用户一次，不会产生无法覆盖的封锁。session 读取全部 try/catch：取不到就退化成“只有 `pending_action` + `environment`”的最小 state，并在 `review_notes` 里说明历史可能不完整。
+失败分三类，处理方式不同：
+
+- **瞬时失败**（网关 5xx、网络错误、速率限制、超时）：按 400ms / 800ms 退避**重试同一调用**，最多 3 轮。实测过网关在 2 分钟内连续 4 次 5xx——一次重试就能吸收，而不是把 4 个完全正常的调用都变成确认弹窗。
+- **上下文类失败**（`context limit` / `max_tokens_exceeded`）：判定是估算过于乐观，于是**把预算减半、再减到四分之一**重建 state 重试。
+- **确定性失败**（鉴权、响应形状不符、模型 id 不存在）：重试结果必然相同，直接进入兜底。
+
+兜底路径：异常归一化为一句话（如 `jev review unavailable (context limit)`），再按 `onError` 降级，默认 `ask`。硬拒**必须**由两项有效答案共同支持、且目的地置信度达到 `denyConfidence`，所以网关抖动或接近平票的目的地判定最多只会多问用户一次，不会产生无法覆盖的封锁。session 读取全部 try/catch：取不到就退化成“只有 `pending_action` + `environment`”的最小 state，并在 `review_notes` 里说明历史可能不完整。
 
 ## 排错
 

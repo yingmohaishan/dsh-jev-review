@@ -156,9 +156,64 @@ check(
   decide(exfilAnswers).kind === "deny",
 );
 check(
-  "decide: tau is configurable (tau=0.99 removes the authorization gap, the severity gate still asks)",
-  decide(forcePushAnswers, { tau: 0.99 }).kind === "ask",
+  "decide: confirmTau is configurable (0.99 removes the authorization gap, the severity gate still asks)",
+  decide(forcePushAnswers, { confirmTau: 0.99 }).kind === "ask" &&
+    decide(forcePushAnswers, { confirmTau: 0.99 }).category === "irreversible_effect",
+  `category=${decide(forcePushAnswers, { confirmTau: 0.99 }).category}`,
+);
+check(
+  "decide: tau alone no longer moves the confirmation gate",
+  decide(forcePushAnswers, { tau: 0.99 }).category === "authorization_gap",
   `category=${decide(forcePushAnswers, { tau: 0.99 }).category}`,
+);
+
+// --- live-calibration regression -----------------------------------------
+// Answers recorded by the shipped gate against real sessions. Every one of
+// these was escalated to a user confirmation under the old single shared
+// threshold, even though the plugin's own ladder rates them severity 0-1 with
+// nothing leaving the machine.
+const liveBenignEdit = {
+  needs_confirm: { type: "noul", noul: 0.65 },
+  explicit_grant: { type: "noul", noul: 0.1 },
+  sends_sensitive: { type: "noul", noul: 0.04 },
+  destination: {
+    type: "choice",
+    choice: "not_applicable",
+    probabilities: { not_applicable: 0.98, trusted_third_party: 0.01, unknown: 0.01 },
+  },
+  reversibility: { type: "choice", choice: "simple", probabilities: { simple: 0.95, bounded: 0.02, catastrophic: 0.01 } },
+  blast_radius: { type: "choice", choice: "workspace", probabilities: { workspace: 0.94, local_machine: 0.06, production: 0 } },
+};
+const liveInertCall = {
+  needs_confirm: { type: "noul", noul: 0.58 },
+  explicit_grant: { type: "noul", noul: 0.17 },
+  sends_sensitive: { type: "noul", noul: 0.08 },
+  destination: { type: "choice", choice: "not_applicable", probabilities: { not_applicable: 0.98, unknown: 0.02 } },
+  reversibility: { type: "choice", choice: "trivial", probabilities: { trivial: 1 } },
+  blast_radius: { type: "choice", choice: "workspace", probabilities: { workspace: 0.54, local_machine: 0.46 } },
+};
+check(
+  "live regression: an in-scope workspace edit at needs_confirm=0.65 is now allowed",
+  decide(liveBenignEdit).kind === "allow",
+  `kind=${decide(liveBenignEdit).kind} severity=${decide(liveBenignEdit).severity}`,
+);
+check(
+  "live regression: confirmTau=0.5 restores the old escalation for that same call",
+  decide(liveBenignEdit, { confirmTau: 0.5 }).kind === "ask" &&
+    decide(liveBenignEdit, { confirmTau: 0.5 }).category === "authorization_gap",
+);
+check(
+  "live regression: a trivial workspace call at needs_confirm=0.58 is now allowed",
+  decide(liveInertCall).kind === "allow",
+  `kind=${decide(liveInertCall).kind} severity=${decide(liveInertCall).severity}`,
+);
+check(
+  "decide: a low-severity call still asks when the confirmation signal is strong",
+  decide({ ...liveBenignEdit, needs_confirm: { type: "noul", noul: 0.85 } }).kind === "ask",
+);
+check(
+  "decide: raising confirmTau never clears the severity gate",
+  decide({ ...liveBenignEdit, reversibility: { type: "choice", choice: "severe" } }).kind === "ask",
 );
 check(
   "decide: onError=deny shape via failureVerdict",
