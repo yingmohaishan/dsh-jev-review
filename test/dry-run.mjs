@@ -222,6 +222,17 @@ check(
 );
 check("rule ranks: bounded=2", REVERSIBILITY_RANK.bounded === 2);
 
+// --- effect-free tool scope ----------------------------------------------
+check(
+  "config: effect-free tools are skipped by default",
+  resolveConfig({}).skipInertTools === true && resolveConfig({}).skipTools.length === 0,
+);
+check(
+  "config: flag and skipTools parse from the environment",
+  resolveConfig({}, { JEV_REVIEW_SKIP_INERT_TOOLS: "false" }).skipInertTools === false &&
+    resolveConfig({}, { JEV_REVIEW_SKIP_TOOLS: "a, b ,,c" }).skipTools.join("|") === "a|b|c",
+);
+
 // --- error normalisation -------------------------------------------------
 check(
   "classifyGatewayFailure: nested max_tokens_exceeded -> 'context limit'",

@@ -1,10 +1,12 @@
 # dsh-jev-review
 
-用 **Command Code 的 Jev 决策模型**（`typesafe/jev`，返回概率而非文本）在**每次工具调用前**做一次授权审查，并按**不可逆程度分级**处理：
+用 **Command Code 的 Jev 决策模型**（`typesafe/jev`，返回概率而非文本）在**每次有副作用的工具调用前**做一次授权审查，并按**不可逆程度分级**处理：
 
 - 简单不可逆（工作区内的格式化、构建、覆盖/删除单个已知文件、清理本会话自建对象）→ **自动放行**；
 - 不可逆程度较高（多对象既有内容、跨共享远端、触碰生产）→ **要求用户确认**；
 - 敏感数据外发到**不可信目的地** → **硬拒**，用户授权也不能放行。
+
+纯读取、检索与会话记账类工具（`read` / `grep` / `glob` / `todo_write` / `ask_user_question` 等）**根本不进审查**：它们改不了文件、跑不了命令、也发不出数据，送去打分只会白花一次同步网关往返。见「审查范围」。
 
 它是官方实验插件 `@deepseek-ai/dsh-experimental-auto-review` 的替代品：接线方式相同（`tools/pre-execute` 前置拦截），但判定不是聊天模型输出 JSON，而是六个带类型的决策问题 + 固定的阈值规则；本地不依赖任何 DSH 包（零依赖，避免桌面端安装前的 DSH peer 兼容校验）。
 
@@ -18,6 +20,7 @@
 tools/pre-execute (prepend)
   └─ agent 存在？外层 run_code？→ 直接 next()
   └─ 已启用且不在关闭中？
+  └─ 惰性工具（read/grep/glob/todo_write/…）？→ 直接 next()（不调网关）
   └─ 从 session 快照出 state{policy, environment, project_instructions, filtered_history, pending_action}
   └─ 发送前预算裁剪（估算 token ≤ stateBudgetTokens，绝不裁剪 pending_action）
   └─ POST {endpoint}/systemone  模型 typesafe/jev，六个问题
@@ -30,6 +33,18 @@ tools/pre-execute (prepend)
 六个决策问题（`lib/policy.js`）：`needs_confirm`(noul)、`explicit_grant`(noul)、`sends_sensitive`(noul)、`destination`(choice)、`reversibility`(choice)、`blast_radius`(choice)。
 
 `needs_confirm`（这次调用还需要人类确认吗）与 `explicit_grant`（保留指令是否**点名**授权了这个确切动作/目标/范围）是两个独立信号。严重度门槛只允许被 `explicit_grant` 解除：模型单纯觉得“这是常规工作”不算授权。缺失的 `explicit_grant` 按 `0`（无授权）计，绝不按 1 计。
+
+## 审查范围
+
+只有**可能产生副作用**的调用才会被送去审查。纯读取、检索与会话记账类工具直接放行，不消耗网关调用：
+
+`read`、`glob`、`grep`、`todo_write`、`get_goal`、`create_goal`、`update_goal`、`ask_user_question`、`skill`、`list_agents`、`job_list`、`job_output`、`schedule_list`
+
+这份名单刻意保守：**未知工具一律照常审查**，`web_*`、MCP 访问、电脑操作、任务控制和一切写操作都不在其中。要调整用 `skipInertTools`（整体关闭）和 `skipTools`（追加工具名），见「配置」表。
+
+实测（153 次真实审查）：其中 62 次（40.5%）落在惰性工具上，吃掉 38.3% 的审查 token 与 36.0% 的审查耗时——单次平均 8,759 input token、1.77 秒同步阻塞——而 12 次弹窗里有 6 次来自这些工具。它们的判决按定义就是 routine，本地判断零成本，且不可能与模型对"并不存在的副作用"产生分歧。
+
+把某个工具加进 `skipTools` 前，先自己确认它真的无副作用；内置名单只保证名单内那些。
 
 ## 安装
 
@@ -186,6 +201,8 @@ node .\test\dry-run.mjs
 | `maxStringChars` | `JEV_REVIEW_MAX_STRING_CHARS` | `4000` | 单个字符串裁剪上限 |
 | `maxReasonChars` | `JEV_REVIEW_MAX_REASON_CHARS` | `1200` | 交给宿主的 reason 长度上限 |
 | `presets` | `JEV_REVIEW_PRESETS` | `[]` | 空 = **只审查本插件发布的 `auto` 模式**；非空则只审查列出的 preset 名 |
+| `skipInertTools` | `JEV_REVIEW_SKIP_INERT_TOOLS` | `true` | 惰性工具（见「审查范围」）不进审查、不调网关。设 `false` 恢复逐个审查 |
+| `skipTools` | `JEV_REVIEW_SKIP_TOOLS` | `[]` | 在内置惰性名单之外追加要跳过的工具名（逗号分隔）。**只有你确认过无副作用的工具才放这里** |
 | `dryRun` | `JEV_REVIEW_DRY_RUN` | `false` | 诊断模式：审查一切、**绝不拦截**，只写审计日志 |
 | `logPath` | `JEV_REVIEW_LOG_PATH` | `""` | 每次审查追加一行 JSON 审计到该路径（空 = 关闭） |
 

@@ -170,6 +170,48 @@ check("skips performed no gateway request", requests === before, `${requests - b
 const ptcInner = await state.handler(execOf("Write-Output ok", { parent: "c-parent" }), next);
 check("PTC inner call (parent set) IS reviewed", ptcInner === downstreamAllow && requests > before, JSON.stringify(ptcInner));
 
+console.log("\n=== wiring: effect-free tool scope ===");
+const beforeInert = requests;
+const inertRead = await state.handler(execOf("ignored", { name: "read", arguments: { file_path: "p" } }), next);
+check(
+  "an effect-free tool (read) never reaches the gateway",
+  inertRead === downstreamAllow && requests === beforeInert,
+  `${requests - beforeInert} extra requests`,
+);
+const inertTodo = await state.handler(execOf("ignored", { name: "todo_write", arguments: {} }), next);
+check("session bookkeeping (todo_write) never reaches the gateway", requests === beforeInert);
+const effectfulWrite = await state.handler(execOf("ignored", { name: "write", arguments: { file_path: "p", content: "x" } }), next);
+check("a writing tool (write) is still reviewed", requests > beforeInert, `${requests - beforeInert} requests`);
+
+const { ctx: allCtx, state: allState } = fakeContext({
+  endpoint: `http://127.0.0.1:${port}`,
+  apiKeyEnv: "JEV_TEST_KEY",
+  timeoutMs: 5000,
+  skipInertTools: false,
+});
+apply(allCtx);
+const beforeAll = requests;
+const reviewedRead = await allState.handler(execOf("ignored", { name: "read", arguments: { file_path: "p" } }), next);
+check(
+  "skipInertTools:false restores reviewing that same tool",
+  reviewedRead === downstreamAllow && requests > beforeAll,
+  `${requests - beforeAll} requests`,
+);
+const { ctx: extraCtx, state: extraState } = fakeContext({
+  endpoint: `http://127.0.0.1:${port}`,
+  apiKeyEnv: "JEV_TEST_KEY",
+  timeoutMs: 5000,
+  skipTools: ["web_fetch"],
+});
+apply(extraCtx);
+const beforeExtra = requests;
+const extraSkipped = await extraState.handler(execOf("ignored", { name: "web_fetch", arguments: { url: "https://x" } }), next);
+check(
+  "skipTools adds a tool to the skip set",
+  extraSkipped === downstreamAllow && requests === beforeExtra,
+  `${requests - beforeExtra} extra requests`,
+);
+
 console.log("\n=== wiring: verdict payloads ===");
 const allowed = await state.handler(execOf("Write-Output ok"), next);
 check("calm review -> downstream result passed through untouched", allowed === downstreamAllow);
